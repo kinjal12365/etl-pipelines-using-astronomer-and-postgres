@@ -1,0 +1,160 @@
+README
+Overview
+This Airflow DAG (nasa_apod_postgres) performs an ETL (Extract, Transform, Load) process:
+
+Create the Table: Ensures that the target PostgreSQL table exists.
+Extract Data: Uses the NASA APOD API to fetch the picture of the day and its details.
+Transform Data: Processes the API response to pick only the needed fields.
+Load Data: Inserts the transformed data into a PostgreSQL table.
+Prerequisites
+Before you run this DAG, ensure you have the following:
+
+Airflow Installation: Airflow should be installed and configured.
+Airflow Connections:
+NASA API Connection: A connection (e.g., with the connection ID nasa_api) configured in Airflow that includes the API key in its extra JSON (under the key api_key).
+PostgreSQL Connection: A connection (e.g., with the connection ID my_postgres_connection) set up in Airflow that allows access to your PostgreSQL database.
+PostgreSQL Database: A PostgreSQL instance accessible via the connection configuration.
+Python Dependencies: The necessary Airflow providers installed (for HTTP and PostgreSQL) typically via:
+bash
+Copy
+Edit
+pip install apache-airflow-providers-http apache-airflow-providers-postgres
+Code Explanation & Step-by-Step Walkthrough
+1. Importing Modules
+python
+Copy
+Edit
+from airflow import DAG
+from airflow.providers.http.operators.http import SimpleHttpOperator
+from airflow.decorators import task
+from airflow.providers.postgres.hooks.postgres import PostgresHook
+from airflow.utils.dates import days_ago
+import json
+DAG and Task Imports: Importing the DAG class, task decorator, and necessary operators/hooks.
+HTTP & Postgres Providers: Imports to make HTTP calls (to NASA API) and interact with PostgreSQL.
+Utility Imports: days_ago is used to define the start date for the DAG.
+2. Defining the DAG
+python
+Copy
+Edit
+with DAG(
+    dag_id='nasa_apod_postgres',
+    start_date=days_ago(1),
+    schedule_interval='@daily',
+    catchup=False
+) as dag:
+dag_id: Unique identifier for the DAG.
+start_date: Defines when the DAG should start running (1 day ago from the current time).
+schedule_interval: Set to run daily.
+catchup: Disabled so that only the current scheduled run is executed.
+3. Task 1 - Create Table
+python
+Copy
+Edit
+@task
+def create_table():
+    postgres_hook = PostgresHook(postgres_conn_id="my_postgres_connection")
+    create_table_query = """
+    CREATE TABLE IF NOT EXISTS apod_data (
+        id SERIAL PRIMARY KEY,
+        title VARCHAR(255),
+        explanation TEXT,
+        url TEXT,
+        date DATE,
+        media_type VARCHAR(50)
+    );
+    """
+    postgres_hook.run(create_table_query)
+Purpose: This task ensures that the table apod_data exists in your PostgreSQL database.
+PostgresHook: Initializes a connection using the connection ID my_postgres_connection.
+SQL Query: The query creates the table if it doesn’t already exist.
+Execution: The query is executed using postgres_hook.run().
+4. Task 2 - Extract Data from NASA API
+python
+Copy
+Edit
+extract_apod = SimpleHttpOperator(
+    task_id='extract_apod',
+    http_conn_id='nasa_api',
+    endpoint='planetary/apod',
+    method='GET',
+    data={"api_key": "{{ conn.nasa_api.extra_dejson.api_key }}"},
+    response_filter=lambda response: response.json(),
+)
+SimpleHttpOperator: This operator calls the NASA APOD API.
+http_conn_id: Uses the nasa_api connection defined in Airflow.
+Endpoint & Method: Sets the endpoint to /planetary/apod and uses the GET method.
+API Key: Retrieves the API key from the connection extras.
+Response Filter: A lambda function converts the HTTP response to JSON.
+5. Task 3 - Transform the Data
+python
+Copy
+Edit
+@task
+def transform_apod_data(response):
+    apod_data = {
+        'title': response.get('title', ''),
+        'explanation': response.get('explanation', ''),
+        'url': response.get('url', ''),
+        'date': response.get('date', ''),
+        'media_type': response.get('media_type', '')
+    }
+    return apod_data
+Purpose: This task transforms the raw JSON response to a Python dictionary containing only the fields needed.
+Data Extraction: Uses the get() method to safely retrieve values from the API response. Defaults to an empty string if a key is missing.
+Return Value: Returns the processed dictionary to be used by the next task.
+6. Task 4 - Load Data into PostgreSQL
+python
+Copy
+Edit
+@task
+def load_data_to_postgres(apod_data):
+    postgres_hook = PostgresHook(postgres_conn_id='my_postgres_connection')
+    insert_query = """
+    INSERT INTO apod_data (title, explanation, url, date, media_type)
+    VALUES (%s, %s, %s, %s, %s);
+    """
+    postgres_hook.run(insert_query, parameters=(
+        apod_data['title'],
+        apod_data['explanation'],
+        apod_data['url'],
+        apod_data['date'],
+        apod_data['media_type']
+    ))
+Purpose: This task loads the transformed data into the PostgreSQL table.
+PostgresHook: Again, uses the PostgreSQL connection.
+Insert Query: Prepares an SQL query to insert the data into apod_data.
+Parameters: Binds the extracted values from the transformed data dictionary.
+Execution: Runs the insert query with the provided parameters.
+7. Defining Task Dependencies
+python
+Copy
+Edit
+create_table() >> extract_apod  # Ensure table creation before data extraction
+api_response = extract_apod.output
+transformed_data = transform_apod_data(api_response)
+load_data_to_postgres(transformed_data)
+Task Chaining:
+create_table() must run before extract_apod to ensure that the database table exists.
+The output from extract_apod is passed to transform_apod_data to process the response.
+Finally, the transformed data is passed to load_data_to_postgres to insert the record into the database.
+How to Run the DAG
+Place the DAG File: Save the code in a Python file (e.g., nasa_apod_postgres.py) in your Airflow DAGs directory.
+Start Airflow: Ensure your Airflow webserver and scheduler are running:
+bash
+Copy
+Edit
+airflow webserver
+airflow scheduler
+Activate the DAG: Navigate to the Airflow UI, find the nasa_apod_postgres DAG, and turn it on.
+Monitor the Run: Check the logs of each task from the Airflow UI to verify that the table is created, the API is called, data is transformed, and the record is inserted into PostgreSQL.
+Validate in PostgreSQL: Use your database client or Airflow’s DBViewer to verify that the apod_data table contains the newly inserted data.
+Troubleshooting Tips
+Connection Errors: Double-check your Airflow connections (nasa_api and my_postgres_connection) if tasks fail to connect.
+API Key Issues: Ensure your API key is correctly stored in the connection extra JSON.
+Database Permissions: Verify that the PostgreSQL user has permission to create tables and insert data.
+By following this guide and reviewing the explanations for each section of the code, you should have a clear understanding of how the DAG operates and how to run it successfully. Happy Airflow-ing!
+
+Note at the end just remember to add connections in admin from the airflow ui make 2 connections one for postgres and one for nasa api give the nasa 
+http link in the http connection place provide the api key in the extra field and give the postgres conn name as described in postgres hook ie my_postgres_connection 
+give all the database,password and user as postgres and give the port as given in docker compose ie 5432 and check the docker container running and give the name as the container running  
