@@ -158,3 +158,13 @@ By following this guide and reviewing the explanations for each section of the c
 Note at the end just remember to add connections in admin from the airflow ui make 2 connections one for postgres and one for nasa api give the nasa 
 http link in the http connection place provide the api key in the extra field and give the postgres conn name as described in postgres hook ie my_postgres_connection 
 give all the database,password and user as postgres and give the port as given in docker compose ie 5432 and check the docker container running and give the name as the container running  
+
+
+
+for running it in aws cloud you have to create a aws rds cloud instance choose postgres over there and choose the base tier selections which are free
+choose the db instances from rds then set it up by creating a new db then choose the free tier set the password as postgres and all db name and user as same
+
+then go to vpc security group click the security group id then give edit inbound rules add a postgressqltype and give custom port 0.0.0.0 
+
+after your db is totaly healthy and created paste the endpoint url of it present in the page to the airflow connection postgres host part and volla its doesn’t
+ 
